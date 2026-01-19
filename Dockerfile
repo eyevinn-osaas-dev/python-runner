@@ -11,7 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     libfreetype6-dev \
     libpng-dev \
+    curl \
+    ca-certificates \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (required for OSC CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install gradio
 
 WORKDIR /runner

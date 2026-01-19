@@ -95,15 +95,8 @@ cd /usercontent
 
 # Load environment variables from config service if configured
 if [ -n "$OSC_ACCESS_TOKEN" ] && [ -n "$CONFIG_SVC" ]; then
-  echo "Loading configuration from config service..."
-  CONFIG_RESPONSE=$(curl -s -H "Authorization: Bearer $OSC_ACCESS_TOKEN" "$CONFIG_SVC")
-  if [ $? -eq 0 ] && [ -n "$CONFIG_RESPONSE" ]; then
-    # Export each key-value pair from the JSON response
-    for key in $(echo "$CONFIG_RESPONSE" | python3 -c "import sys, json; print(' '.join(json.load(sys.stdin).keys()))" 2>/dev/null); do
-      value=$(echo "$CONFIG_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('$key', ''))" 2>/dev/null)
-      export "$key=$value"
-    done
-  fi
+  echo "Loading environment variables from application config service '$CONFIG_SVC'"
+  eval $(npx -y @osaas/cli@latest web config-to-env $CONFIG_SVC)
 fi
 
 # Install Python dependencies
