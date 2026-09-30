@@ -258,10 +258,27 @@ if [ -f "requirements-dev.txt" ]; then
 fi
 
 # Run any setup scripts if present
+#
+# Bounded with `timeout` so a hung setup.sh cannot block the build forever
+# (previously: no timeout — a hang left the container starting up
+# indefinitely with no terminal signal). This repo has no loading-server /
+# error-page mechanism (unlike php-runner's sibling escape hatch); the
+# existing terminal-failure pattern for build-step failures (e.g. a failed
+# `pip install` above) is simply to let `set -e` propagate a non-zero exit,
+# which terminates the container run. Both a timeout (exit 124) and any
+# other non-zero exit from setup.sh are treated the same way here.
 if [ -f "setup.sh" ]; then
   echo "Running setup.sh..."
   chmod +x setup.sh
-  ./setup.sh
+  setup_exit=0
+  timeout 300s ./setup.sh || setup_exit=$?
+  if [ $setup_exit -eq 124 ]; then
+    echo "Error: setup.sh timed out after 300s" >&2
+    exit 124
+  elif [ $setup_exit -ne 0 ]; then
+    echo "Error: setup.sh failed (exit $setup_exit)" >&2
+    exit $setup_exit
+  fi
 fi
 
 # Function to check if a package is in requirements
