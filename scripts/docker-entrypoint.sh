@@ -219,19 +219,51 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
   # failing command substitution used as an assignment's RHS is a "simple
   # command" and is NOT exempt from -e, so a bare non-zero exit here would
   # kill the whole script immediately, before config_exit is ever read below
-  # — silently skipping the tolerant log-and-continue path this config_exit
-  # check implements, for a timeout exit (124) same as any other non-zero
+  # — silently skipping the explicit config_exit handling below (so no
+  # [CONFIG] message), for a timeout exit (124) same as any other non-zero
   # exit from this call.
-  config_env_output=$(timeout 60s npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1) && config_exit=0 || config_exit=$?
-  if [ $config_exit -eq 0 ]; then
-    valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=")
+  # The same set -e rule applies to the grep below: `x=$(... | grep ...)`
+  # exits the script silently when grep matches nothing, so it is guarded
+  # with an explicit `|| valid_exports=""`.
+  # A failure to load the config is fatal: continuing would start the app
+  # without its environment variables. This runner has no loading server, so
+  # (like the setup.sh timeout below) failure is a non-zero exit.
+  config_err_file=$(mktemp)
+  config_env_output=$(timeout 60s npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file") && config_exit=0 || config_exit=$?
+  config_err_output=$(cat "$config_err_file" 2>/dev/null || true)
+  rm -f "$config_err_file"
+  config_failed=0
+  if [ $config_exit -ne 0 ]; then
+    config_failed=1
+    if [ $config_exit -eq 124 ]; then
+      echo "[CONFIG] ERROR: Timed out loading config from config service '$CONFIG_SVC'" >&2
+    else
+      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output $config_err_output" >&2
+    fi
+    if echo "$config_env_output $config_err_output" | grep -qiE '401|403|unauthori[sz]ed|forbidden|expired'; then
+      echo "[CONFIG] Hint: the access token may have expired. Run refresh-app-config to renew it." >&2
+    fi
+  elif [ -z "$(echo "$config_env_output" | tr -d '[:space:]')" ]; then
+    # Empty store is not a failure
+    echo "[CONFIG] Config service '$CONFIG_SVC' has no parameters"
+  else
+    valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=") || valid_exports=""
     if [ -n "$valid_exports" ]; then
       eval "$valid_exports"
       var_count=$(echo "$valid_exports" | wc -l | tr -d ' ')
       echo "[CONFIG] Loaded $var_count environment variable(s)"
+    else
+      config_failed=1
+      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid export lines: $config_env_output" >&2
     fi
-  else
-    echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output" >&2
+  fi
+  if [ $config_failed -ne 0 ]; then
+    if [ $config_exit -eq 124 ]; then
+      exit 124
+    elif [ $config_exit -ne 0 ]; then
+      exit "$config_exit"
+    fi
+    exit 1
   fi
 fi
 
