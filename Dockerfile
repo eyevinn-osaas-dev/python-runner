@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js (required for OSC CLI)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+# Install Node.js (required for OSC CLI). Pinned to the 24.x line (not setup_lts.x)
+# for CVE-2026-111497; the build fails below the fixed release 24.22.1.
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
+    && node -e 'const [M,m,p]=process.versions.node.split(".").map(Number); if (M!==24||m<22||(m===22&&p<1)) { console.error("Node "+process.versions.node+" is below 24.22.1 (CVE-2026-111497)"); process.exit(1) }' \
+    && node --version \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install gradio
