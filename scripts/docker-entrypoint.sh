@@ -229,7 +229,7 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
   # without its environment variables. This runner has no loading server, so
   # (like the setup.sh timeout below) failure is a non-zero exit.
   config_err_file=$(mktemp)
-  config_env_output=$(timeout 60s npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file") && config_exit=0 || config_exit=$?
+  config_env_output=$(timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file") && config_exit=0 || config_exit=$?
   config_err_output=$(cat "$config_err_file" 2>/dev/null || true)
   rm -f "$config_err_file"
   config_failed=0

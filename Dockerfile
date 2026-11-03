@@ -26,6 +26,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 
 RUN pip install gradio
 
+# Version of @osaas/cli that docker-entrypoint.sh runs via npx. This is the
+# single place the version is pinned; bump it here.
+ENV OSAAS_CLI_VERSION=4.35.0
 WORKDIR /runner
 COPY ./scripts ./
 RUN chmod +x ./*.sh

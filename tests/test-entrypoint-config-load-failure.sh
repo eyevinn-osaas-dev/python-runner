@@ -50,7 +50,7 @@ run_block() {
   echo $?
 }
 
-ENVV=(OSC_ACCESS_TOKEN=tok CONFIG_SVC=store)
+ENVV=(OSC_ACCESS_TOKEN=tok CONFIG_SVC=store OSAAS_CLI_VERSION=4.35.0)
 
 # Failure paths: non-zero exit and never reach the next phase
 rc=$(run_block timeout "${ENVV[@]}")
