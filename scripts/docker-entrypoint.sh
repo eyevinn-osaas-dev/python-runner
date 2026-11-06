@@ -205,6 +205,21 @@ if [ -n "${SUB_PATH:-}" ]; then
 fi
 
 # Load environment variables from config service if configured
+# redact_config_log: scrub credentials from text before it is written to the
+# pod log. Literal values of the runner's own tokens are replaced first, then
+# well-known token shapes (GitHub tokens, JWTs, Basic auth).
+redact_config_log() {
+  local s="$1" v
+  for v in "${OSC_ACCESS_TOKEN:-}" "${CONFIG_API_KEY:-}" "${GIT_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
+    if [ -n "$v" ]; then
+      s="${s//"$v"/[REDACTED]}"
+    fi
+  done
+  printf '%s' "$s" | sed -E \
+    -e 's/gh[pso]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/[REDACTED]/g' \
+    -e 's/([Bb]asic )[A-Za-z0-9+\/=]{8,}/\1[REDACTED]/g'
+}
 if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
   # Derive OSC environment from OSC_MCP_URL if OSC_ENV is not set explicitly
   if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
@@ -242,9 +257,9 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
     if [ $config_exit -eq 124 ]; then
       echo "[CONFIG] ERROR: Timed out loading config from config service '$CONFIG_SVC'" >&2
     else
-      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output $config_err_output" >&2
+      echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $(redact_config_log "$config_err_output")" >&2
     fi
-    if echo "$config_env_output $config_err_output" | grep -qiE '401|403|unauthori[sz]ed|forbidden|expired'; then
+    if echo "$config_err_output" | grep -qiE '401|403|unauthori[sz]ed|forbidden|expired'; then
       echo "[CONFIG] Hint: the access token may have expired. Run refresh-app-config to renew it." >&2
     fi
   elif [ -z "$(echo "$config_env_output" | tr -d '[:space:]')" ]; then
@@ -258,7 +273,11 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
       echo "[CONFIG] Loaded $var_count environment variable(s)"
     else
       config_failed=1
-      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid export lines: $config_env_output" >&2
+      # Never print the output itself: it holds decrypted parameter values.
+      # Names only (tenant-chosen keys), enough to see which key is invalid.
+      rejected_lines=$(echo "$config_env_output" | grep -c "^export " || true)
+      rejected_names=$(echo "$config_env_output" | sed -n 's/^export \([^= ]*\)=.*/\1/p' | head -n 10 | cut -c1-64 | tr '\n' ' ')
+      echo "[CONFIG] ERROR: Config service '$CONFIG_SVC' returned output with no valid export lines ($rejected_lines export line(s) rejected, names: ${rejected_names:-none}; values not logged)" >&2
     fi
   fi
   if [ $config_failed -ne 0 ]; then
