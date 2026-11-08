@@ -210,7 +210,7 @@ fi
 # well-known token shapes (GitHub tokens, JWTs, Basic auth).
 redact_config_log() {
   local s="$1" v
-  for v in "${OSC_ACCESS_TOKEN:-}" "${CONFIG_API_KEY:-}" "${GIT_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
+  for v in "${OSC_ACCESS_TOKEN:-}" "${OSC_REFRESH_TOKEN:-}" "${config_token:-}" "${CONFIG_API_KEY:-}" "${GIT_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
     if [ -n "$v" ]; then
       s="${s//"$v"/[REDACTED]}"
     fi
@@ -226,11 +226,38 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
     _extracted=$(echo "$OSC_MCP_URL" | sed -n 's|.*\.svc\.\([a-z]*\)\.osaas\.io.*|\1|p')
     OSC_ENV=${_extracted:-prod}
   fi
-  # Token refresh block (matching birme/claude-runner#14)
-  REFRESH_RESULT=$(curl -sf -X POST \
+  # Token refresh block (Stage 1 of Eyevinn/python-runner#39). OSC_ACCESS_TOKEN
+  # is a long-lived runner-refresh token. Exchange it for a 1h PAT that is used
+  # ONLY for the config load below; the app keeps the original
+  # OSC_ACCESS_TOKEN, and additionally gets OSC_REFRESH_TOKEN so it can renew a
+  # PAT itself. Never assign OSC_ACCESS_TOKEN in the shell: it would reach the
+  # app (Stage 2, gated on REJECT_RUNNER_REFRESH_TOKENS, does that). A
+  # parameter-store key named OSC_REFRESH_TOKEN loaded later overrides this.
+  export OSC_REFRESH_TOKEN="${OSC_REFRESH_TOKEN:-$OSC_ACCESS_TOKEN}"
+  config_token="$OSC_ACCESS_TOKEN"
+  refresh_body_file=$(mktemp)
+  refresh_resp_file=$(mktemp)
+  chmod 600 "$refresh_body_file" "$refresh_resp_file"
+  printf '{"token":"%s"}' "$OSC_REFRESH_TOKEN" > "$refresh_body_file"
+  # No -f: the status code is read from -w. jq is not in the image; parse with node.
+  refresh_status=$(curl -s --max-time 10 -X POST \
     "https://token.svc.${OSC_ENV:-prod}.osaas.io/runner-token/refresh" \
-    -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
-    OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
+    -H "Content-Type: application/json" \
+    --data "@$refresh_body_file" \
+    -o "$refresh_resp_file" -w '%{http_code}' 2>/dev/null) || refresh_status="000"
+  refresh_parse='try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(typeof j[process.argv[2]]==="string"?j[process.argv[2]]:"")}catch(e){}'
+  fresh_token=""
+  if [ "$refresh_status" = "200" ]; then
+    fresh_token=$(node -e "$refresh_parse" "$refresh_resp_file" token 2>/dev/null) || fresh_token=""
+  fi
+  if [ -n "$fresh_token" ]; then
+    config_token="$fresh_token"
+  else
+    refresh_code=$(node -e "$refresh_parse" "$refresh_resp_file" code 2>/dev/null) || refresh_code=""
+    refresh_code=$(printf '%s' "$refresh_code" | tr -cd 'A-Za-z0-9_-')
+    echo "[CONFIG] WARNING: runner token exchange failed (HTTP ${refresh_status:-000}, code=${refresh_code:-none}); using the original token" >&2
+  fi
+  rm -f "$refresh_body_file" "$refresh_resp_file"
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
   # Guard against a hung/unresolvable CONFIG_SVC blocking boot forever.
   # The "&& config_exit=0 || config_exit=$?" form (rather than a plain
@@ -248,7 +275,7 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
   # without its environment variables. This runner has no loading server, so
   # (like the setup.sh timeout below) failure is a non-zero exit.
   config_err_file=$(mktemp)
-  config_env_output=$(timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file") && config_exit=0 || config_exit=$?
+  config_env_output=$(OSC_ACCESS_TOKEN="$config_token" timeout 60s npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>"$config_err_file") && config_exit=0 || config_exit=$?
   config_err_output=$(cat "$config_err_file" 2>/dev/null || true)
   rm -f "$config_err_file"
   config_failed=0

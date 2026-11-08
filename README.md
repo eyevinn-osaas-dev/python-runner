@@ -58,6 +58,7 @@ docker run --rm \
 | `AWS_ACCESS_KEY_ID` | AWS/S3 access key ID |
 | `AWS_SECRET_ACCESS_KEY` | AWS/S3 secret access key |
 | `OSC_ACCESS_TOKEN` | Access token for Eyevinn Open Source Cloud config service |
+| `OSC_REFRESH_TOKEN` | Set by the runner to the original long-lived `OSC_ACCESS_TOKEN` (unless already set). Exchange it for a 1 hour token with `POST https://token.svc.<env>.osaas.io/runner-token/refresh` and body `{"token": "<OSC_REFRESH_TOKEN>"}`; the response field `token` is the new token. A parameter store key with the same name overrides it. Example: `requests.post(f"https://token.svc.{env}.osaas.io/runner-token/refresh", json={"token": os.environ["OSC_REFRESH_TOKEN"]}).json()["token"]` |
 | `CONFIG_API_KEY` | Optional API key for encrypted parameter store. When set alongside `OSC_ACCESS_TOKEN` and `CONFIG_SVC`, secret parameters are decrypted before being injected as environment variables. |
 | `CONFIG_SVC` | URL to config service endpoint |
 | `PORT` | Port to run the application on (default: `8080`) |
