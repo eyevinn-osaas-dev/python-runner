@@ -43,6 +43,11 @@ clone_from_git() {
     repo_path=$(echo "$url" | sed -E "s|https?://[^/]+/||" | sed 's|/$||')
   fi
 
+  # Strip one trailing .git: the clone and origin URLs below append ".git"
+  # themselves, so a Clone URL that already ends in .git (as Gitea's
+  # setup-git-repo returns) would otherwise be cloned as <repo>.git.git.
+  repo_path="${repo_path%.git}"
+
   if [ -n "$branch" ]; then
     echo "Cloning repository: $repo_path (branch: $branch) from $git_host_public"
   else
